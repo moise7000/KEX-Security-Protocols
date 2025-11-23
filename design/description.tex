@@ -5,41 +5,47 @@
 
 
 This protocol begins with entity $A$ generating a nonce, denoted as $N_A$. $A$ then encrypts her identity together
-with the nonce using the freshly generated session key $K_{AB}$. The transmitted data is structured as follows:
-$\{| \langle A,N_A \rangle |\}_{K_{AB}}$. This message costs \textbf{63}.
+with the nonce using the freshly generated session key $K_{AB}$. $B$ will know which key to use because $A$ sends her identity in plaintext.
+The transmitted data is structured as follows: $A, \{| \langle A,N_A \rangle |\}_{K_{AB}}$. This message costs \textbf{64}.
 
 \vspace{1cm}
 
 After sending the first message, $A$ sends to the honest and trusted server $S$, using the shared key $K_{AS}$,
-the identity of $B$, a timestamp $\tau$, a lifetime period $\lambda$ to confirm the key and the session key $K_{AB}$.
-The transmitted data is structured as follows: $\{| \langle B, \tau, \lambda, K_{AB} \rangle |\}_{K_{AS}}$. This message costs \textbf{166}.
+the identity of $B$, a timestamp $\tau$, a lifetime period $\lambda$ to confirm the key and the session key $K_{AB}$. The
+transmitted data is structured as follows: $A, \{| \langle B, \tau, \lambda, K_{AB} \rangle |\}_{K_{AS}}$.
+This message costs \textbf{167}.
 
 \vspace{1cm}
 
-First, $S$ checks whether $t \geq \tau + \lambda$, where $t$ denotes the time at which $S$ receives the message from
+First, $S$ knows which key to use because $A$ sends her identity in plaintext. Second,  $S$ checks whether $t \geq \tau + \lambda$,
+where $t$ denotes the time at which $S$ receives the message from
 $A$. If this condition holds, $S$ aborts. Otherwise, using the shared key $K_{BS}$, $S$ sends to $B$ essentially the
 same message as before, except that $A$ is replaced with $B$. The transmitted data is structured as follows:
-$\{| \langle A, \tau, \lambda, K_{AB} \rangle |\}_{K_{BS}}$. This message costs: \textbf{166}.
+$S, \{| \langle A, \tau, \lambda, K_{AB} \rangle |\}_{K_{BS}}$. This message costs: \textbf{167}.
 
 \vspace{1cm}
 
-$B$ receives the message $\{| \langle A, \tau, \lambda, K_{AB} \rangle |\}_{K_{BS}}$ and obtains the session key $K_{AB}$.
+$B$ receives the message $S, \{| \langle A, \tau, \lambda, K_{AB} \rangle |\}_{K_{BS}}$ and obtains the session key $K_{AB}$.
+$B$ knows which key to use because $S$ sends his identity in plaintext.
 He also learns the validity period $\lambda$, starting from time $\tau$, during which $A$ will accept his response.
 This measure provides protection against ticket theft. Indeed, even if an attacker manages to intercept a ticket,
 they will not be able to use it after its expiration. When $B$ receives this message at time $t$, if
-$t \geq \tau + \lambda$, then $B$ aborts.
+$t \geq \tau + \lambda$, then $B$ aborts. $B$ checks also the validity of the first message. He compares the identity contained in
+the message sent by $S$ and the one contained in the first message. If they don't match, $B$ abort.
 
 Otherwise, $B$ respond to the first message of $A$, he can decrypt $\{| \langle A, N_A \rangle |\}_{K_{AB}}$ with the session key.
+$B$ verifies that the $A$ in $\{| \langle A, N_A \rangle |\}_{K_{AB}}$ is the same compared to the first message he can now decrypt : $\{| \langle A,N_A \rangle |\}_{K_{AB}}$.
 Key confirmation lies in the fact that $B$ sends back $N_A + 1$ to $A$. In this way, $A$ knows that $B$ has successfully
 retrieved the key. This allows combining key confirmation with the challenge–response mechanism for the authentication
-of $B$ with respect to $A$. The transmitted data is structured as follows: $\{| N_A + 1|\}_{K_{AB}}$.
-This message costs \textbf{12}.
+of $B$ with respect to $A$. The transmitted data is structured as follows: $B, \{| N_A + 1|\}_{K_{AB}}$.
+This message costs \textbf{13}.
 
 \vspace{1cm}
 
 
 At the end, when $A$ receives the last message from $B$ at time $t$, she checks whether $t \geq \tau + \lambda$. If
 this condition holds, $A$ rejects the message and aborts. Otherwise, the key exchange protocol succeeds.
+$A$ knows which key to use because $B$ sends his identity in plaintext. $A$ checks the nonce $N_A$, if it has been reused, she aborts.
 \vspace{1cm}
 
-The total cost is: \textbf{409}.
+The total cost is: \textbf{413}.
