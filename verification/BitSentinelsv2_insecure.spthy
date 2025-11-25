@@ -1,0 +1,194 @@
+theory BitSentinels_V2
+begin
+
+builtins: asymmetric-encryption, symmetric-encryption
+
+/* Description du protocole [cite: 3980-3982]
+   1. B -> S: {Nb}pkS, {B}Nb, {A}Nb
+   2. S -> A: {Nb}Kas, {B}Nb, {K}Kas
+   3. A -> B: {Nb}pkB, {K}pkB
+   4. B -> A: {Nb}K
+*/
+
+/* --- 1. Infrastructure et Clés --- */
+
+// Génération des clés asymétriques (PKI) pour A, B et S [cite: 3984]
+// "les agents A et B connaissent la clé publique pub(C)"
+rule Register_PK:
+  [ Fr(~ltkX) ]
+  --[ ]->
+  [ !Ltk($X, ~ltkX)
+  , !Pk($X, pk(~ltkX))
+  , Out(pk(~ltkX)) 
+  ]
+
+// Génération de la clé partagée symétrique Kas entre A et S
+// Déduit de l'étape 2 : "clé privée qu'il possède entre S et A: Kas" [cite: 3991]
+rule Register_Shared_Key:
+  [ Fr(~kas) ]
+  --[ ]->
+  [ !SharedKey($A, $S, ~kas) ]
+
+// Règle de compromission (pour tester la sécurité si une clé long-terme fuite)
+rule Reveal_Ltk:
+  [ !Ltk(X, ltk) ]
+  --[ Reveal(X) ]->
+  [ Out(ltk) ]
+
+rule Reveal_Shared_Key:
+  [ !SharedKey(A, S, kas) ]
+  --[ Reveal(S), Reveal(A) ]->
+  [ Out(kas) ]
+
+
+/* --- 2. Règles du Protocole --- */
+
+// Etape 1 [cite: 3990]
+// B génère Nb, chiffre avec pk(S). Chiffre son nom et celui de A avec Nb (symétrique).
+rule B_1:
+  let
+    // {Nb}pub(S)
+    part1 = aenc(~nb, pkS)
+    // {B}Nb (symétrique car Nb est un nonce utilisé comme clé ici)
+    part2 = senc($B, ~nb)
+    // {A}Nb
+    part3 = senc($A, ~nb)
+    msg1  = <part1, part2, part3>
+  in
+  [ Fr(~nb)
+  , !Pk($S, pkS)
+  ]
+  --[ Create_B($B, ~nb) ]->
+  [ Out(msg1)
+  , St_B_1($B, $A, $S, ~nb) 
+  ]
+
+// Etape 2 [cite: 3991]
+// S déchiffre Nb, identifie A et B, génère K.
+// Envoie à A : {Nb}Kas, {B}Nb, {K}Kas
+rule S_1:
+  let
+    // Déchiffrement de Nb
+    nb = adec(c_nb, ~ltkS)
+    
+    // Vérification des identités via déchiffrement symétrique avec Nb
+    // S vérifie que les messages contiennent bien B et A
+    checkB = sdec(c_B, nb) 
+    checkA = sdec(c_A, nb) 
+
+    // Préparation du message pour A
+    // {Nb}Kas
+    out1 = senc(nb, ~kas)
+    // {B}Nb (S transfère le morceau reçu de B ou le recrée)
+    out2 = senc($B, nb)
+    // {K}Kas
+    out3 = senc(~k, ~kas)
+    msg2 = <out1, out2, out3>
+  in
+  [ In( <c_nb, c_B, c_A> )
+  , !Ltk($S, ~ltkS)
+  , !SharedKey($A, $S, ~kas) // Récupération de la clé partagée Kas
+  , Fr(~k)                   // Génération de la clé de session K [cite: 3988]
+  ]
+  --[ Eq(checkB, $B) // On s'assure que le nom chiffré correspond à l'agent B
+    , Eq(checkA, $A) // On s'assure que le nom chiffré correspond à l'agent A
+    , Running_S($S, $A, $B, ~k)
+    ]->
+  [ Out(msg2) ]
+
+// Etape 3 [cite: 3992]
+// A déchiffre avec Kas. Il retient K et Nb.
+// Envoie à B : {Nb}pk(B), {K}pk(B)
+rule A_1:
+  let
+    // Déchiffrement avec Kas
+    nb = sdec(c_nb, ~kas)
+    k  = sdec(c_k, ~kas)
+    
+    // A peut vérifier l'identité de B grâce à {B}Nb reçu dans msg2
+    checkB = sdec(c_B, nb)
+
+    // Préparation message pour B
+    out1 = aenc(nb, pkB)
+    out2 = aenc(k, pkB)
+    msg3 = <out1, out2>
+  in
+  [ In( <c_nb, c_B, c_k> )
+  , !SharedKey($A, $S, ~kas)
+  , !Pk($B, pkB)
+  ]
+  --[ Eq(checkB, $B)
+    , Running_A($A, $B, k)
+    ]->
+  [ Out(msg3)
+  , St_A_1($A, $B, k, nb)
+  ]
+
+// Etape 4 [cite: 3994-3995]
+// B déchiffre, vérifie Nb.
+// Envoie à A : {Nb}K
+rule B_2:
+  let
+    // B utilise sa clé privée pour retrouver Nb et K
+    nb_rec = adec(c_nb, ~ltkB)
+    k_rec  = adec(c_k, ~ltkB)
+    
+    // Message de confirmation chiffré avec la clé de session K
+    msg4   = senc(~nb, k_rec)
+  in
+  [ In( <c_nb, c_k> )
+  , St_B_1($B, $A, $S, ~nb)
+  , !Ltk($B, ~ltkB)
+  ]
+  --[ Eq(nb_rec, ~nb) // "vérifie que le nonce reçu est bien le nonce généré" [cite: 3994]
+    , Commit_B($B, $A, k_rec)
+    , Secret_K(k_rec)
+    ]->
+  [ Out(msg4) ]
+
+// Etape 5 [cite: 3996]
+// A déchiffre avec K et vérifie Nb. Fin du protocole.
+rule A_2:
+  let
+    nb_verif = sdec(c_final, k)
+  in
+  [ In(c_final)
+  , St_A_1($A, $B, k, nb)
+  ]
+  --[ Eq(nb_verif, nb) // "vérifie que c'est bien le même Nb" [cite: 3996]
+    , Commit_A($A, $B, k)
+    , Secret_K(k)
+    , Finish() 
+    ]->
+  []
+
+/* --- 3. Restrictions et Propriétés --- */
+
+// Restriction d'égalité standard pour vérifier les Eq(...) dans les règles
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+// Lemme d'exécutabilité : Vérifie qu'une trace valide existe
+lemma executable:
+  exists-trace
+  "Ex A B k #i. Commit_A(A, B, k) @i & not (Ex #j. Reveal(A) @j) & not (Ex #j. Reveal(B) @j)"
+
+// Lemme de confidentialité sur la clé K [cite: 4002]
+lemma secrecy_K:
+  all-traces
+  "All k #i. 
+    Secret_K(k) @i ==> 
+    not (Ex #j. K(k) @j) | (Ex A #r. Reveal(A) @r)"
+
+// Lemme d'authentification (B vers A)
+lemma authentication_B_A:
+  all-traces
+  "All A B k #i. Commit_B(B, A, k) @i ==> 
+    (Ex #j. Running_A(A, B, k) @j) | (Ex #r. Reveal(A) @r)"
+
+// Lemme d'authentification (A vers B)
+lemma authentication_A_B:
+  all-traces
+  "All A B k #i. Commit_A(A, B, k) @i ==> 
+    (Ex #j. Commit_B(B, A, k) @j) | (Ex #r. Reveal(B) @r)"
+    end"

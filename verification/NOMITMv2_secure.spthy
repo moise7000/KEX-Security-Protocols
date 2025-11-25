@@ -1,0 +1,146 @@
+theory NOMITM_Secure
+begin
+
+builtins: asymmetric-encryption, hashing
+
+/* Protocole NOMITM
+   D'après le document PDF fourni.
+   
+   A -> B : A, Na
+   B -> A : {B, Nb, Na}pk(A)
+   A -> B : {Kab, Nb, Na, A}pk(B)
+   B -> A : H(Kab, Na)
+*/
+
+/* --- 1. Infrastructure de Clés (PKI) --- */
+// On suppose que les agents connaissent les clés publiques [cite: 3945]
+
+rule Register_pk:
+  [ Fr(~ltkA) ]
+  --[ ]->
+  [ !Ltk($A, ~ltkA)    // Clé privée (persistante)
+  , !Pk($A, pk(~ltkA)) // Clé publique associée
+  , Out(pk(~ltkA))     // L'attaquant connaît les clés publiques
+  ]
+
+// Règle optionnelle pour vérifier la sécurité si une clé long-terme est compromise
+rule Reveal_ltk:
+  [ !Ltk(A, ltkA) ]
+  --[ Reveal(A) ]->
+  [ Out(ltkA) ]
+
+/* --- 2. Règles du Protocole --- */
+
+// Etape 1: A envoie son identité et un nonce Na à B [cite: 3938, 3949]
+rule Init_1:
+  [ Fr(~na) ]
+  --[ Create_I($A, ~na) ]->
+  [ Out(<$A, ~na>)
+  , St_A_1($A, $B, ~na) // A mémorise qu'il veut parler à B avec Na
+  ]
+
+// Etape 2: B génère Nb et renvoie {B, Nb, Na}pk(A) [cite: 3940, 3950]
+rule Resp_1:
+  let
+    msg_out = aenc(<$B, ~nb, na>, pkA)
+  in
+  [ In(<A, na>)        // B reçoit A et Na
+  , Fr(~nb)            // B génère Nb
+  , !Pk(A, pkA)        // B cherche la clé publique de A
+  ]
+  --[ Running_R($B, A, <na, ~nb>) ]-> // B pense parler à A
+  [ Out(msg_out)
+  , St_B_1($B, A, na, ~nb)
+  ]
+
+// Etape 3: A vérifie Na, génère Kab, envoie {Kab, Nb, Na, A}pk(B) [cite: 3942, 3952]
+rule Init_2:
+  let
+    // Déchiffrement et vérification implicite via pattern matching
+    // A vérifie que le nonce reçu est bien son ~na
+    msg_in = aenc(<$B, nb, ~na>, pk(~ltkA)) 
+    msg_out = aenc(<~kab, nb, ~na, $A>, pkB)
+  in
+  [ St_A_1($A, $B, ~na)
+  , In(msg_in)
+  , !Ltk($A, ~ltkA)
+  , !Pk($B, pkB)
+  , Fr(~kab) // La clé de session Kab est choisie par A [cite: 3947]
+  ]
+  --[ Commit_I($A, $B, <~na, nb>)   // A termine sa partie auth
+    , Running_I($A, $B, ~kab)       // A initie la clé avec B
+    , Secret($A, $B, ~kab)          // Propriété de confidentialité
+  ]->
+  [ Out(msg_out)
+  , St_A_2($A, $B, ~na, nb, ~kab)
+  ]
+
+// Etape 4: B vérifie nonces, reçoit Kab, envoie H(Kab, Na) [cite: 3944, 3953]
+rule Resp_2:
+  let
+    // B s'attend à recevoir Kab, son Nb, le Na reçu en étape 1, et l'identité A
+    msg_in = aenc(<kab, ~nb, na, A>, pk(~ltkB))
+    proof  = h(<kab, na>)
+  in
+  [ St_B_1($B, A, na, ~nb)
+  , In(msg_in)
+  , !Ltk($B, ~ltkB)
+  ]
+  --[ Commit_R($B, A, <na, ~nb>)    // B termine l'auth
+    , Commit_R_Key($B, A, kab)      // B accepte la clé
+    , Secret($B, A, kab)            // Propriété de confidentialité
+  ]->
+  [ Out(proof) ]
+
+// Etape Finale (Implicite): A reçoit la preuve de B [cite: 3955]
+// Ce message confirme à A que B connaît Kab
+rule Init_3:
+  let
+    expected_proof = h(<~kab, ~na>)
+  in
+  [ St_A_2($A, $B, ~na, nb, ~kab)
+  , In(expected_proof)
+  ]
+  --[ Finished_I($A, $B, ~kab) ]->
+  [ ]
+
+/* --- 3. Propriétés de Sécurité (Lemmes) --- */
+
+// Vérification que le modèle tourne correctement (Sanity Check)
+lemma executable:
+  exists-trace
+  "Ex A B k #i. Finished_I(A, B, k) @i & not (Ex #j. Reveal(A) @j) & not (Ex #j. Reveal(B) @j)"
+
+// Propriété: Confidentialité de Kab [cite: 3956]
+// Si A ou B pensent que 'k' est secret, l'attaquant ne doit pas le connaître
+// (sauf si les clés long-terme ont été compromises via Reveal)
+lemma secrecy_Kab:
+  all-traces
+  "All A B k #i. 
+    Secret(A, B, k) @i ==> 
+    ( not (Ex #j. K(k) @j) 
+      | (Ex #r. Reveal(A) @r) 
+      | (Ex #r. Reveal(B) @r) 
+    )"
+
+// Propriété: Authentification injective (fraîcheur et accord sur les nonces) [cite: 3955]
+// Si A s'engage avec B sur les nonces <na, nb>, alors B doit avoir lancé le protocole avec A
+lemma injective_agreement_initiator:
+  all-traces
+  "All A B nonces #i. 
+    Commit_I(A, B, nonces) @i ==> 
+    ( (Ex #j. Running_R(B, A, nonces) @j & j < i)
+      | (Ex #r. Reveal(A) @r) 
+      | (Ex #r. Reveal(B) @r)
+    ) & not (Ex A2 B2 #i2. Commit_I(A2, B2, nonces) @i2 & not(#i2 = #i))"
+
+// Authentification vue par le Répondeur (B) sur les nonces
+lemma injective_agreement_responder:
+  all-traces
+  "All B A nonces #i. 
+    Commit_R(B, A, nonces) @i ==> 
+    ( (Ex #j. Create_I(A, fst(nonces)) @j & j < i) // fst(nonces) = na
+      | (Ex #r. Reveal(A) @r) 
+      | (Ex #r. Reveal(B) @r)
+    ) & not (Ex B2 A2 #i2. Commit_R(B2, A2, nonces) @i2 & not(#i2 = #i))"
+  end"
