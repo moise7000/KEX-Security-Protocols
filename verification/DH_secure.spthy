@@ -1,0 +1,95 @@
+theory DH_secure
+begin
+
+builtins: diffie-hellman, signing
+
+/* Protocole Diffie-Hellman Signé (Authentifié)
+   Nous supposons une PKI préalable.
+   
+   1. I -> R : g^x, sign(<'1', g^x, R>, skI)
+   2. R -> I : g^y, sign(<'2', g^y, I>, skR)
+*/
+
+/* --- Infrastructure de Clés (PKI) --- */
+
+// Génération des clés long-terme pour les agents
+rule Register_pk:
+  [ Fr(~ltk) ]
+  --[ ]->
+  [ !Ltk($A, ~ltk)   // Clé privée (Persistante)
+  , !Pk($A, pk(~ltk)) // Clé publique associée
+  , Out(pk(~ltk))     // L'attaquant connaît les clés publiques
+  ]
+
+/* --- Règles du Protocole --- */
+
+rule Init_1:
+  let 
+    gx = 'g'^~x
+    // Alice signe sa part, un tag '1' et le destinataire prévu
+    sig = sign(<'1', gx, $R>, ~ltkI) 
+  in
+  [ Fr(~x)
+  , !Ltk($I, ~ltkI) ]
+  --[ Create_I($I, ~x) ]->
+  [ St_I_1($I, $R, ~x)
+  , Out(<gx, sig>) 
+  ]
+
+rule Resp_1:
+  let 
+    gy = 'g'^~y
+    // Bob vérifie la signature d'Alice
+    msg_to_sign = <'1', X, $R>
+    // Bob calcule la clé
+    key = X^~y
+    // Bob signe sa réponse
+    sig_resp = sign(<'2', gy, $I>, ~ltkR)
+  in
+  [ Fr(~y)
+  , !Ltk($R, ~ltkR)
+  , !Pk($I, pkI) // Bob a besoin de la clé publique d'Alice
+  , In(<X, sig>)
+  ]
+  // Restriction: On vérifie que la signature reçue est valide
+  --[ Eq(verify(sig, msg_to_sign, pkI), true)
+    , Secret($R, $I, key)
+    , Finish()
+    ]->
+  [ Out(<gy, sig_resp>) ]
+
+rule Init_2:
+  let 
+    msg_to_sign = <'2', Y, $I>
+    key = Y^~x
+  in
+  [ St_I_1($I, $R, ~x)
+  , !Pk($R, pkR) // Alice a besoin de la clé publique de Bob
+  , In(<Y, sig>)
+  ]
+  --[ Eq(verify(sig, msg_to_sign, pkR), true)
+    , Secret($I, $R, key)
+    , Finish()
+    ]->
+  []
+
+/* --- Restrictions (Helpers) --- */
+
+// Restriction d'égalité utilisée pour vérifier les signatures
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+/* --- Propriétés de Sécurité --- */
+
+// 1. Executabilité
+lemma executable:
+  exists-trace
+  "Ex #i. Finish() @i"
+
+// 2. Secret de la clé (Ceci doit être VRAI maintenant)
+lemma key_secrecy:
+  all-traces
+  "All A B k #i. 
+    Secret(A, B, k) @i ==> not (Ex #j. K(k) @j)"
+
+end

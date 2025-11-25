@@ -1,0 +1,66 @@
+theory DH_insecure
+begin
+
+builtins: diffie-hellman
+
+/* Protocole Diffie-Hellman simple (Anonyme)
+   1. I -> R : g^x
+   2. R -> I : g^y
+   
+   Clé : g^(xy)
+*/
+
+/* --- Règles du Protocole --- */
+
+// Règle 1 : L'initiateur (Alice) commence
+rule Init_1:
+  let 
+    gx = 'g'^~x // Calcul de la part DH publique
+  in
+  [ Fr(~x) ] // Génération d'un exposant secret frais
+  --[ ]->
+  [ St_I_1($I, $R, ~x)   // Stockage de l'état
+  , Out(gx)              // Envoi de g^x sur le réseau public
+  ]
+
+// Règle 2 : Le répondeur (Bob) reçoit et répond
+rule Resp_1:
+  let 
+    gy = 'g'^~y
+    key = X^~y // Calcul de la clé finale (g^x)^y
+  in
+  [ Fr(~y)
+  , In(X) ] // Réception d'une valeur (supposée être g^x)
+  --[ Secret($R, $I, key) // Bob pense partager 'key' avec Alice
+    , Finish() 
+    ]->
+  [ Out(gy) ]
+
+// Règle 3 : L'initiateur termine
+rule Init_2:
+  let 
+    key = Y^~x // Calcul de la clé finale (g^y)^x
+  in
+  [ St_I_1($I, $R, ~x)
+  , In(Y) ] // Réception d'une valeur (supposée être g^y)
+  --[ Secret($I, $R, key) // Alice pense partager 'key' avec Bob
+    , Finish()
+    ]->
+  []
+
+/* --- Propriétés de Sécurité (Lemmes) --- */
+
+// 1. Vérifier que le protocole peut fonctionner normalement (Sanity Check)
+lemma executable:
+  exists-trace
+  "Ex #i. Finish() @i"
+
+// 2. Secret de la clé (Ceci va échouer !)
+// "Si une partie A pense avoir établi une clé secrète 'k' avec B, 
+// alors l'adversaire K ne doit pas connaître 'k'"
+lemma key_secrecy:
+  all-traces
+  "All A B k #i. 
+    Secret(A, B, k) @i ==> not (Ex #j. K(k) @j)"
+
+end
