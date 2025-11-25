@@ -1,0 +1,118 @@
+%! Author = ewan
+%! Date = 11/25/25
+
+% Preamble
+\documentclass[11pt]{article}
+
+% Packages
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+% Document
+% Document
+\begin{document}
+
+    \title{
+            { \textbf{Security Protocols and Verification}} \\[1ex]
+        {\small Attack of Cryptographic Protocols}
+    }
+
+
+    \author{
+        Garance Frolla \\
+        Ely Marthouret \\
+        Ewan Decima\\ \\
+        Team: \textbf{ASKO OM8464A2}
+    }
+
+    \date{September / November 2025}
+
+
+    \maketitle
+    \tableofcontents
+    \newpage
+
+
+
+    \section{Attack on Chronos V7}
+    \subsection{Assumptions}
+    We assume that the intruder $I$ initial knowledge $\mathcal{K}_I$ is
+    \begin{center}
+        $\mathcal{K}_I = \Bigl\{ K(A), K(B), K\bigl(\{|A|\}_{K_{BS}}\bigr), K(F) \Bigr\}$
+    \end{center}
+
+    Indeed, if $I$ plays the man-in-the-middle role and read all the messages in a legitimate conversation, $I$ is able to
+    extract those information.
+
+It is assumed that $I$ knows the function $F$, because if $F$ were kept secret between $B$ and $S$, the way it is shared would become questionable.
+    In other words, if $F$ needs to remain secret between $B$ and $S$, it would have to be exchanged in the same way as a session key.
+
+
+
+
+
+    \subsection{Scenario}
+    
+    \begin{enumerate}
+        \item $A \rightarrow S : A, B, \{| K, N_K, A, B |\}$
+        \item $S \rightarrow \textcolor{red}{I(B)} : S, \{|N_K|\}_{K_{BS}}, \{|K|\}_{N_K}, \{|A|\}_{K_{BS}}, \{|N_S|\}_{K_{BS}}$
+        \item $I \rightarrow S : I, B, \{| \Sigma,  {N_I}_{\Sigma}, I, B |\}$
+        \item $S \rightarrow \textcolor{red}{I(B)} : S, \{|{N_I}_{\Sigma}|\}_{K_{BS}}, \{|\Sigma|\}_{{N_I}_{\Sigma}}, \{|I|\}_{K_{BS}}, \{|N_S'\}_{K_{BS}}$
+        \item $\textcolor{red}{I(S)} \rightarrow B : S, \{|{N_I}_{\Sigma}|\}_{K_{BS}}, \{|\Sigma|\}_{N_K}, \{|A|\}_{K_{BS}}, \{|N_S'|\}_{K_{BS}}$
+        \item $B \rightarrow S : B, \{|N_S'|\}_{{N_I}_{\Sigma}}, \{|N_B|\}_{K_{BS}}$
+        \item $S \rightarrow B : B, \{|F(N_S')|\}_{{N_I}_{\Sigma}}, \{|N_B|\}_{K_{BS}}$
+        \item $B \rightarrow \textcolor{red}{I(A)} : B, \{|N_B|\}_{{N_I}_{\Sigma}}, \{|A|\}_{\Sigma}$
+        \item $\textcolor{red}{I(A)} \rightarrow B  : A, \{|N_B|\}_{{N_I}_{\Sigma}}, \{|A|\}_{\Sigma}, \{|B|\}_{\Sigma}$
+
+    \end{enumerate}
+
+    \section{Attack Description}
+
+
+
+
+
+
+    \subsection{Flow}
+
+    \begin{itemize}
+        \item \textbf{Message 1:} $A$ initiates the protocol, wanting to establish a secure session with $B$ through
+        the trusted server $S$.
+
+        \item \textbf{Message 2:} $S$ sends a legitimate message to $B$, but $I$ intercepts and blocks this communication.
+
+
+        \item \textbf{Message 3:} $I$ starts a legitimate communication with $B$ involving the trusted server $S$ in
+         order to get $\{{N_I}_{\Sigma}\}_{K_{BS}}$.
+
+
+
+
+        \item \textbf{Message 4:} $S$ sends the legitimate message to $B$ (of $I$ - $B$ communication), but $I$ intercepts and blocks this communication.
+
+        \item \textbf{Message 5:} $I$, pretending to be the $S$, sends $B$ the continuation of the communication involving $A$.
+        thus choosing the key $\Sigma$, the associated nonce $\{|{N_I}_{\Sigma}\}_{K_{BS}}$, and replacing its encrypted identity with that of A
+
+        \item \textbf{Message 6 and 7:} $B$ continues the run normally without the legitimate data
+
+
+        \item \textbf{Message 8:} $I$ intercepts and blocks the message from $B$ intended for Alice. At this step, $I$ knows this
+        \begin{center}
+            $\mathcal{K}_I = \Bigl\{ K(A), K(B), K\bigl(\{|A|\}_{K_{BS}}\bigr), K(F),  K\bigl(\{|N_B|\}_{{N_I}_{\Sigma}}\bigr) \Bigr\}$
+        \end{center}
+
+        \item \textbf{Message 9:} $I$, pretending to be $A$, sends the final response to $B$ using the previous step.
+
+
+
+    \end{itemize}
+
+    \subsection{Result}
+
+    In the end, $B$ believes he is communicating with $A$, but he is actually communicating with $I$ with a key chosen by $I$ : authentication fails.
+
+
+
+
+\end{document}
