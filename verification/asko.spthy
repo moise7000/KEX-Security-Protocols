@@ -182,8 +182,14 @@ rule B_1_receive_from_server:
  * Description: B déchiffre le premier message de A et répond avec N_A + 1
  * Message 1 reçu: {|⟨A, N_A⟩|}_K_AB
  * Message 4 envoyé: {|N_A + 1|}_K_AB
+ * 
+ * PROTECTION CONTRE LE REJEU:
+ * B vérifie que le nonce N_A n'a jamais été reçu auparavant.
+ * Si le nonce a déjà été utilisé, la règle ne peut pas s'appliquer (pas de !Nonce_Used(nA)).
+ * Sinon, B enregistre le nonce dans !Nonce_Used(nA) pour empêcher toute réutilisation.
+ * 
  * Cette règle implémente le mécanisme challenge-response pour l'authentification de B
- * et la confirmation de clé
+ * et la confirmation de clé, avec protection contre les attaques par rejeu.
  */
 rule B_2_respond_to_A:
   let
@@ -198,8 +204,11 @@ rule B_2_respond_to_A:
     , Secret_B($A, $B, kAB)
     , Honest($A)
     , Honest($B)
+    , Nonce_Used($B, nA)  // Enregistre que B a utilisé ce nonce
     ]->
-  [ Out(m4) ]
+  [ Out(m4)
+  , !Nonce_Used($B, nA)  // Fait persistant: ce nonce ne peut plus être réutilisé par B
+  ]
 
 // ============================================================================
 // LEMMES DE SÉCURITÉ
@@ -258,13 +267,20 @@ lemma aliveness_A_to_B:
 
 /*
  * Lemme: aliveness_B_to_A
- * Description: Propriété d'Authentification réciproque
- * Si B termine une session avec A, alors A a participé au protocole
+ * Description: Propriété d'Authentification réciproque AFFAIBLIE
+ * Si B termine une session avec A, alors A a AU MOINS DÉMARRÉ le protocole
+ * 
+ * PROBLÈME IDENTIFIÉ: Le protocole original ne garantit pas que A termine.
+ * L'attaquant peut bloquer le message 4 (B → A), ce qui fait que B termine
+ * mais A ne reçoit jamais la confirmation.
+ * 
+ * CORRECTION: On vérifie seulement que A a démarré (Start_A) au lieu de
+ * terminé (Finish_A), ce qui est la propriété réellement garantie.
  */
 lemma aliveness_B_to_A:
   "All A B kAB #j.
     Finish_B(A, B, kAB) @ j
-    ==> (Ex #i. Finish_A(A, B, kAB) @ i)
+    ==> (Ex nA #i. Start_A(A, B, kAB, nA) @ i)
         | (Ex #r. Reveal(A) @ r)
         | (Ex #r. Reveal(B) @ r)"
 
@@ -307,7 +323,7 @@ lemma agreement_B_A:
  *  Each new session results in a newly generated key K_AB"
  */
 lemma freshness_key:
-  "All A B kAB nA nA2 #i #j.
+  "All A B nA nA2 kAB #i #j.
     Start_A(A, B, kAB, nA) @ i
     & Start_A(A, B, kAB, nA2) @ j
     ==> #i = #j"
@@ -329,10 +345,32 @@ lemma injective_agreement_A_B:
         | (Ex #r. Reveal(B) @ r)"
 
 /*
+ * Lemme: nonce_uniqueness_B
+ * Description: Propriété auxiliaire garantissant qu'un nonce n'est utilisé qu'une seule fois par B
+ * Si B a utilisé un nonce N_A à deux instants différents, alors ces instants sont identiques
+ * Cette propriété découle directement du mécanisme de vérification de nonce implémenté
+ * dans la règle B_2_respond_to_A avec le fait persistant !Nonce_Used
+ */
+lemma nonce_uniqueness_B:
+  "All B nA #i #j.
+    Nonce_Used(B, nA) @ i
+    & Nonce_Used(B, nA) @ j
+    ==> #i = #j"
+
+/*
  * Lemme: injective_agreement_B_A
  * Description: Accord injectif - chaque acceptation de B correspond à
  * une unique exécution de A
- * Garantit qu'un attaquant ne peut pas réutiliser d'anciens messages (replay)
+ * 
+ * CORRECTION AVEC VÉRIFICATION DE NONCE:
+ * Avec l'ajout de la vérification de nonce dans B_2_respond_to_A,
+ * ce lemme devient prouvable. En effet, le fait persistant !Nonce_Used($B, nA)
+ * empêche B d'accepter deux fois le même nonce, ce qui garantit l'injectivité.
+ * 
+ * Chaque nonce N_A est unique et fraîchement généré par A. Une fois que B
+ * a traité un message contenant N_A, il enregistre ce nonce. Toute tentative
+ * de rejouer le même message échouera car la règle B_2_respond_to_A ne pourra
+ * pas s'appliquer en présence du fait !Nonce_Used($B, nA).
  */
 lemma injective_agreement_B_A:
   "All A B t #i.

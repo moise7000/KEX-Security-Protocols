@@ -1,0 +1,130 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+
+\title{Analyse des attaques identifiées par Tamarin\\sur le protocole ASKO-OM8464A2}
+\author{Garance Frolla, Ely Marthouret, Ewan Decima\\Team: ASKO OM8464A2}
+\date{Novembre 2025}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+L'analyse formelle du protocole ASKO-OM8464A2 avec l'outil Tamarin a révélé que deux lemmes de 
+sécurité ne peuvent pas être prouvés automatiquement. Ces lemmes concernent les propriétés 
+d'authentification et d'accord injectif. Nous présentons dans ce document les traces d'attaque 
+générées par Tamarin et expliquons pourquoi ces attaques ne sont pas considérées comme des 
+vulnérabilités réelles du protocole dans le contexte de nos spécifications.
+
+\section{Attaque sur le lemme \texttt{aliveness\_B\_to\_A}}
+
+\subsection{Description du lemme}
+
+Le lemme \texttt{aliveness\_B\_to\_A} cherche à vérifier que si l'agent $B$ termine le protocole 
+avec l'agent $A$, alors $A$ a également terminé le protocole. Formellement, le lemme s'exprime 
+comme suit :    
+\[
+\forall A, B, k_{AB}, \#j : \text{Finish\_B}(A, B, k_{AB}) @ \#j \implies 
+\exists \#i : \text{Finish\_A}(A, B, k_{AB}) @ \#i
+\]
+où l'on néglige les cas de compromission des clés.
+
+\subsection{Trace d'attaque identifiée par Tamarin}
+
+Tamarin génère une trace d'attaque où l'adversaire exploite le fait que le dernier message du 
+protocole peut être intercepté ou perdu. La trace se déroule comme suit. L'agent $A$ initie le 
+protocole en générant le nonce $N_A$ et la clé de session $k_{AB}$, puis envoie le premier 
+message $\{|\langle A, N_A \rangle|\}_{k_{AB}}$ vers $B$. Ensuite, $A$ contacte le serveur $S$ 
+en envoyant $\{|\langle B, \tau, \lambda, k_{AB} \rangle|\}_{k_{AS}}$. Le serveur $S$ transmet 
+alors à $B$ le message $\{|\langle A, \tau, \lambda, k_{AB} \rangle|\}_{k_{BS}}$. L'agent $B$ 
+reçoit ce message, déchiffre le premier message de $A$, et envoie la confirmation 
+$\{|N_A + 1|\}_{k_{AB}}$.
+
+À ce stade, l'adversaire intercepte le quatrième message avant qu'il n'atteigne $A$. Le résultat 
+est que $B$ a terminé le protocole avec succès car il a envoyé sa confirmation, mais $A$ n'a 
+jamais reçu cette confirmation et reste donc dans un état d'attente. Tamarin considère que $B$ 
+a exécuté l'action $\text{Finish\_B}(A, B, k_{AB})$ sans qu'il existe d'action correspondante 
+$\text{Finish\_A}(A, B, k_{AB})$.
+
+\subsection{Justification de la validité du protocole}
+
+Cette attaque n'est pas considérée comme une vulnérabilité réelle du protocole ASKO-OM8464A2. 
+En effet, nos spécifications précisent explicitement que la validation de l'échange repose sur 
+l'envoi du dernier message par $B$. Lorsque $B$ envoie le message $\{|N_A + 1|\}_{k_{AB}}$, il 
+démontre qu'il possède la clé de session $k_{AB}$ et qu'il a bien reçu le nonce $N_A$ de $A$. 
+Du point de vue de la sémantique du protocole, l'échange est considéré comme valide dès que $B$ 
+termine son exécution, indépendamment de la réception effective du message par $A$.
+
+Cette conception reflète un choix architectural où la responsabilité de la validation finale 
+incombe au répondant $B$. Dans notre modèle de menace, il est acceptable que $A$ ne reçoive pas 
+toujours la confirmation finale, car le protocole garantit que si $B$ termine, alors $A$ a 
+nécessairement initié la communication et que la clé $k_{AB}$ a été correctement établie. 
+L'important est que $B$ puisse authentifier $A$ via le serveur $S$, ce qui est effectivement 
+garanti par le message 3 du protocole.
+
+\section{Attaque sur le lemme \texttt{injective\_agreement\_B\_A}}
+
+\subsection{Description du lemme}
+
+Le lemme \texttt{injective\_agreement\_B\_A} vise à garantir une propriété d'accord injectif 
+entre $B$ et $A$. Cette propriété stipule que chaque acceptation de la clé $k_{AB}$ par $B$ 
+correspond à une unique initiation par $A$. Formellement :
+\[
+\forall A, B, t, \#i : \text{Commit\_B}(A, B, \langle \text{`init'}, t \rangle) @ \#i \implies 
+\]
+\[
+\exists \#j : \text{Running\_A}(A, B, \langle \text{`init'}, t \rangle) @ \#j \land \#j < \#i \land
+\]
+\[
+\neg \exists A_2, B_2, \#i_2 : \text{Commit\_B}(A_2, B_2, \langle \text{`init'}, t \rangle) @ \#i_2 \land \#i_2 \neq \#i
+\]
+
+\subsection{Trace d'attaque identifiée par Tamarin}
+
+Tamarin génère une trace d'attaque exploitant la possibilité de rejouer les messages du protocole.
+Dans un premier temps, une session légitime se déroule entre $A$ et $B$. L'agent $A$ génère la 
+clé $k_{AB}$ et le nonce $N_A$, puis les messages du protocole sont échangés normalement jusqu'à
+ce que $B$ termine avec succès. L'adversaire enregistre tous les messages échangés durant cette 
+session, en particulier les messages $\{|\langle A, N_A \rangle|\}_{k_{AB}}$ et $\{|\langle A, \tau, \lambda, k_{AB} \rangle|\}_{k_{BS}}$.
+
+Par la suite, l'adversaire rejoue ces deux messages vers $B$. Puisque les messages sont toujours 
+valides selon la vérification temporelle $t < \tau + \lambda$, l'agent $B$ accepte une deuxième 
+fois la clé $k_{AB}$. Du point de vue de Tamarin, il existe maintenant deux exécutions distinctes 
+de $\text{Commit\_B}$ avec la même clé $k_{AB}$, alors qu'il n'existe qu'une seule exécution de 
+$\text{Running\_A}$. Cela viole la propriété d'injectivité qui exige une correspondance bijective 
+entre les acceptations de $B$ et les initiations de $A$.
+
+Cette attaque est rendue possible par l'absence d'un mécanisme liant de manière unique chaque 
+réponse de $B$ à une requête spécifique. Le timestamp $\tau$ et la durée de validité $\lambda$ 
+ne suffisent pas à empêcher le rejeu durant la fenêtre temporelle $[\tau, \tau + \lambda]$, et 
+$B$ ne conserve pas de trace des clés de session déjà utilisées.
+
+\subsection{Justification de la validité du protocole}
+
+Cette attaque par rejeu n'est pas considérée comme une violation de nos spécifications de 
+sécurité. En effet, le document de spécifications stipule explicitement que B doit vérifier
+que le nonce n'a pas déjà été envoyé. Donc si il reçoit 2 fois le même message il pourra avorter
+le protocole.
+
+La propriété d'injectivité stricte n'est donc pas nécessaire dans notre contexte d'utilisation.
+Ce qui importe est que chaque session soit correctement authentifiée et que la clé reste secrète 
+pendant sa durée d'utilisation effective, ce qui est garanti par les propriétés de fraîcheur et 
+de secret que Tamarin a pu vérifier avec succès.
+
+\section{Conclusion}
+
+L'analyse formelle avec Tamarin a permis d'identifier deux traces d'attaque théoriques sur le 
+protocole ASKO-OM8464A2. La première concerne l'absence de garantie que l'initiateur $A$ termine 
+le protocole lorsque le répondant $B$ le termine, et la seconde porte sur la possibilité de 
+rejouer les messages pour violer la propriété d'accord injectif. Toutefois, ces attaques ne 
+constituent pas des vulnérabilités dans le cadre de nos spécifications. Le premier cas est 
+conforme à notre conception où la validation repose sur l'envoi du dernier message par $B$, 
+et le second cas est exclu par notre règle de vérification des nonces.
+
+\end{document}
