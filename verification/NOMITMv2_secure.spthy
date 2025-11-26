@@ -1,15 +1,15 @@
-theory NOMITM_Secure
+theory NOMITM_Secure_Analysis
 begin
 
 builtins: asymmetric-encryption, hashing
 
-/* Protocole NOMITM (Basé sur le PDF fourni)
-   
+/* ----------------------------
+   DESCRIPTION DU PROTOCOLE
    1. A -> B : A, Na
    2. B -> A : {B, Nb, Na}pk(A)
    3. A -> B : {Kab, Nb, Na, A}pk(B)
    4. B -> A : H(Kab, Na)
-*/
+   ---------------------------- */
 
 /* --- 1. Infrastructure de Clés (PKI) --- */
 
@@ -26,23 +26,19 @@ rule Reveal_ltk:
   --[ Reveal(A) ]->
   [ Out(ltkA) ]
 
-restriction Equality:
-  "All x y #i. Eq(x, y) @i ==> x = y"
-
 /* --- 2. Règles du Protocole --- */
 
-// Etape 1: A envoie son identité et un nonce Na à B
+// Etape 1 : A démarre
 rule Init_1:
   [ Fr(~na) ]
-  --[ Create_I($A, ~na)   // On loggue la création pour le lemme de sources
-    , Generate(~na)       // Tag générique pour dire "ceci est une valeur fraîche"
+  --[ Create_I($A, ~na)
+    , Generate(~na) 
     ]->
   [ Out(<$A, ~na>)
   , St_A_1($A, $B, ~na)
   ]
 
-// Etape 2: B génère Nb et renvoie {B, Nb, Na}pk(A)
-// Problème potentiel: B reçoit 'na' mais ne peut pas vérifier sa provenance ici.
+// Etape 2 : B répond avec les nonces
 rule Resp_1:
   let
     msg_out = aenc(<$B, ~nb, na>, pkA)
@@ -51,59 +47,57 @@ rule Resp_1:
   , Fr(~nb)
   , !Pk(A, pkA)
   ]
-  --[ Running_R($B, A, <na, ~nb>)
-    , Generate(~nb)       // Tag pour le lemme de sources
-    , Receive_Nonce(na)   // B reçoit une valeur qu'il traite comme un nonce
+  --[ Running_R($B, A, <na, ~nb>) // B court avec les nonces
+    , Generate(~nb)
+    , Receive_Nonce(na)
+    , Aliveness_R_witness($B)
     ]-> 
   [ Out(msg_out)
   , St_B_1($B, A, na, ~nb)
   ]
 
-// Etape 3: A vérifie Na, génère Kab, envoie {Kab, Nb, Na, A}pk(B)
-// Problème potentiel: A reçoit 'nb' chiffré mais ne le connait pas encore.
+// Etape 3 : A reçoit, génère la clé Kab et l'envoie
 rule Init_2:
   let
-    // A utilise pattern matching pour vérifier que ~na est bien celui envoyé en Etape 1
-    plaintext = adec(ciphertext, ~ltkA)
+    // A vérifie Na et récupère Nb
+    msg_in  = aenc(<$B, nb, ~na>, pk(~ltkA)) 
     msg_out = aenc(<~kab, nb, ~na, $A>, pkB)
   in
   [ St_A_1($A, $B, ~na)
-  , In(ciphertext)
+  , In(msg_in)
   , !Ltk($A, ~ltkA)
   , !Pk($B, pkB)
   , Fr(~kab)
   ]
-  --[ Commit_I($A, $B, <~na, nb>)
-    , Running_I($A, $B, ~kab)
-    , Secret($A, $B, ~kab)
-    , Generate(~kab)      // Tag pour le lemme de sources
-    , Receive_Nonce(nb)   // A reçoit une valeur nb qu'il traite comme un nonce
-    , Eq(plaintext, <$B, nb, ~na>)
+  --[ Commit_I($A, $B, <~na, nb>, ~kab) // A s'engage sur les nonces et la clé
+    , Running_I($A, $B, <~na, nb>, ~kab) // A court pour B
+    , Secret($A, $B, ~kab)               // A déclare la clé secrète
+    , Generate(~kab)
+    , Receive_Nonce(nb)
+    , Aliveness_I_witness($A)
   ]->
   [ Out(msg_out)
   , St_A_2($A, $B, ~na, nb, ~kab)
   ]
 
-// Etape 4: B vérifie nonces, reçoit Kab, envoie H(Kab, Na)
+// Etape 4 : B reçoit la clé et envoie la preuve
 rule Resp_2:
   let
-    // B vérifie ~nb (son nonce) et na (celui reçu en Etape 1)
-    plaintext = adec(ciphertext, ~ltkB)
+    msg_in = aenc(<kab, ~nb, na, A>, pk(~ltkB))
     proof  = h(<kab, na>)
   in
   [ St_B_1($B, A, na, ~nb)
-  , In(ciphertext)
+  , In(msg_in)
   , !Ltk($B, ~ltkB)
   ]
-  --[ Commit_R($B, A, <na, ~nb>)
-    , Commit_R_Key($B, A, kab)
-    , Secret($B, A, kab)
-    , Receive_Key(kab)    // B reçoit une valeur qu'il traite comme une clé
-    , Eq(plaintext, <kab, ~nb, na, A>)
+  --[ Commit_R($B, A, <na, ~nb>, kab) // B s'engage sur nonces et clé
+    , Secret($B, A, kab)              // B déclare la clé secrète
+    , Receive_Key(kab)
+    , Finished_R($B)
   ]->
   [ Out(proof) ]
 
-// Etape Finale
+// Etape Finale : A reçoit la preuve
 rule Init_3:
   let
     expected_proof = h(<~kab, ~na>)
@@ -114,12 +108,7 @@ rule Init_3:
   --[ Finished_I($A, $B, ~kab) ]->
   [ ]
 
-/* --- 3. Lemme de Sources (Typage) --- */
-/* Ce lemme est crucial pour éviter les boucles infinies.
-   Il dit: "Si un agent reçoit une donnée X qu'il considère comme un Nonce ou une Clé,
-   alors X a forcément été généré par la règle 'Generate' ou est connu de l'attaquant (KU)."
-   Cela empêche Tamarin d'essayer de déconstruire X indéfiniment. [cite: 7091-7100]
-*/
+/* --- 3. Lemme de Sources (Pour éviter les boucles infinies) --- */
 lemma types [sources]:
   " (All n #i. Receive_Nonce(n) @i ==> 
       (Ex #j. Generate(n) @j & j < i) | (Ex #j. KU(n) @j & j < i))
@@ -127,32 +116,85 @@ lemma types [sources]:
       (Ex #j. Generate(k) @j & j < i) | (Ex #j. KU(k) @j & j < i))
   "
 
-/* --- 4. Propriétés de Sécurité --- */
+/* --- 4. Propriétés de Sécurité (Lemmes demandés) --- */
 
+// 1. Executable : Vérifie qu'une trace complète existe sans attaque
 lemma executable:
   exists-trace
-  "Ex A B k #i. Finished_I(A, B, k) @i 
-   & not (Ex #j. Reveal(A) @j) & not (Ex #j. Reveal(B) @j)"
+  "Ex A B k #i #j. Finished_I(A, B, k) @i & Finished_R(B) @j 
+   & not (Ex #r. Reveal(A) @r) & not (Ex #r. Reveal(B) @r)"
 
+// 2. Secrecy Kab (Pendant le protocole / Standard)
+// Si A ou B déclarent k secret, l'attaquant ne doit pas le connaître
 lemma secrecy_Kab:
   all-traces
   "All A B k #i. 
     Secret(A, B, k) @i ==> 
     ( not (Ex #j. K(k) @j) | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r) )"
 
-lemma injective_agreement_initiator:
+// 3. Secrecy Kab (Après protocole / Perfect Forward Secrecy - PFS)
+// Vérifie si la clé reste secrète même si les clés long-terme sont révélées PLUS TARD (r > i).
+// Note: Ce lemme échouera probablement (FALSIFIED) car Kab est transportée chiffrée.
+lemma secrecy_Kab_PFS:
   all-traces
-  "All A B nonces #i. 
-    Commit_I(A, B, nonces) @i ==> 
-    ( (Ex #j. Running_R(B, A, nonces) @j & j < i)
-      | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)
-    ) & not (Ex A2 B2 #i2. Commit_I(A2, B2, nonces) @i2 & not(#i2 = #i))"
+  "All A B k #i. 
+    Secret(A, B, k) @i ==> 
+    ( not (Ex #j. K(k) @j) 
+      | (Ex #r. Reveal(A) @r & r < i) // La révélation doit avoir eu lieu AVANT
+      | (Ex #r. Reveal(B) @r & r < i) 
+    )"
 
-lemma injective_agreement_responder:
+// 4. Aliveness
+// Aliveness A -> B : Si A finit, B était vivant.
+lemma aliveness_A_authenticates_B:
   all-traces
-  "All B A nonces #i. 
-    Commit_R(B, A, nonces) @i ==> 
-    ( (Ex #j. Create_I(A, fst(nonces)) @j & j < i)
-      | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)
-    ) & not (Ex B2 A2 #i2. Commit_R(B2, A2, nonces) @i2 & not(#i2 = #i))"
+  "All A B n k #i. Commit_I(A, B, n, k) @i ==> 
+    (Ex #j. Aliveness_R_witness(B) @j) | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)"
+
+// Aliveness B -> A : Si B finit, A était vivant.
+lemma aliveness_B_authenticates_A:
+  all-traces
+  "All B A n k #i. Commit_R(B, A, n, k) @i ==> 
+    (Ex #j. Aliveness_I_witness(A) @j) | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)"
+
+// 5. Agreement (Weak / Non-injective)
+// Agreement A -> B (Sur les nonces uniquement, car B ne connait pas K quand A commit)
+lemma agreement_A_authenticates_B:
+  all-traces
+  "All A B n k #i. Commit_I(A, B, n, k) @i ==> 
+    (Ex #j. Running_R(B, A, n) @j) 
+    | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)"
+
+// Agreement B -> A (Sur nonces ET clé)
+lemma agreement_B_authenticates_A:
+  all-traces
+  "All B A n k #i. Commit_R(B, A, n, k) @i ==> 
+    (Ex #j. Running_I(A, B, n, k) @j) 
+    | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)"
+
+// 6. Freshness Key
+// Vérifie que si une clé est acceptée, elle a été générée fraîchement et est unique
+lemma key_freshness:
+  all-traces
+  "All A B n k #i. Commit_I(A, B, n, k) @i ==> 
+    (Ex #j. Generate(k) @j) 
+    & not (Ex A2 B2 n2 #i2. Commit_I(A2, B2, n2, k) @i2 & not(#i2 = #i))"
+
+// 7. Injective Agreement
+// Injective Agreement A -> B
+lemma injective_agreement_A_authenticates_B:
+  all-traces
+  "All A B n k #i. Commit_I(A, B, n, k) @i ==> 
+    (Ex #j. Running_R(B, A, n) @j & j < i
+     & not (Ex A2 B2 n2 k2 #i2. Commit_I(A2, B2, n2, k2) @i2 & not(#i2 = #i))
+    ) | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)"
+
+// Injective Agreement B -> A
+lemma injective_agreement_B_authenticates_A:
+  all-traces
+  "All B A n k #i. Commit_R(B, A, n, k) @i ==> 
+    (Ex #j. Running_I(A, B, n, k) @j & j < i
+     & not (Ex B2 A2 n2 k2 #i2. Commit_R(B2, A2, n2, k2) @i2 & not(#i2 = #i))
+    ) | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)"
+
 end
