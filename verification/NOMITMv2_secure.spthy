@@ -3,97 +3,107 @@ begin
 
 builtins: asymmetric-encryption, hashing
 
-/* Protocole NOMITM
-   D'après le document PDF fourni.
+/* Protocole NOMITM (Basé sur le PDF fourni)
    
-   A -> B : A, Na
-   B -> A : {B, Nb, Na}pk(A)
-   A -> B : {Kab, Nb, Na, A}pk(B)
-   B -> A : H(Kab, Na)
+   1. A -> B : A, Na
+   2. B -> A : {B, Nb, Na}pk(A)
+   3. A -> B : {Kab, Nb, Na, A}pk(B)
+   4. B -> A : H(Kab, Na)
 */
 
 /* --- 1. Infrastructure de Clés (PKI) --- */
-// On suppose que les agents connaissent les clés publiques [cite: 3945]
 
 rule Register_pk:
-  [ Fr(~ltkA) ]
+  [ Fr(~ltkX) ]
   --[ ]->
-  [ !Ltk($A, ~ltkA)    // Clé privée (persistante)
-  , !Pk($A, pk(~ltkA)) // Clé publique associée
-  , Out(pk(~ltkA))     // L'attaquant connaît les clés publiques
+  [ !Ltk($X, ~ltkX)
+  , !Pk($X, pk(~ltkX))
+  , Out(pk(~ltkX)) 
   ]
 
-// Règle optionnelle pour vérifier la sécurité si une clé long-terme est compromise
 rule Reveal_ltk:
   [ !Ltk(A, ltkA) ]
   --[ Reveal(A) ]->
   [ Out(ltkA) ]
 
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
 /* --- 2. Règles du Protocole --- */
 
-// Etape 1: A envoie son identité et un nonce Na à B [cite: 3938, 3949]
+// Etape 1: A envoie son identité et un nonce Na à B
 rule Init_1:
   [ Fr(~na) ]
-  --[ Create_I($A, ~na) ]->
+  --[ Create_I($A, ~na)   // On loggue la création pour le lemme de sources
+    , Generate(~na)       // Tag générique pour dire "ceci est une valeur fraîche"
+    ]->
   [ Out(<$A, ~na>)
-  , St_A_1($A, $B, ~na) // A mémorise qu'il veut parler à B avec Na
+  , St_A_1($A, $B, ~na)
   ]
 
-// Etape 2: B génère Nb et renvoie {B, Nb, Na}pk(A) [cite: 3940, 3950]
+// Etape 2: B génère Nb et renvoie {B, Nb, Na}pk(A)
+// Problème potentiel: B reçoit 'na' mais ne peut pas vérifier sa provenance ici.
 rule Resp_1:
   let
     msg_out = aenc(<$B, ~nb, na>, pkA)
   in
-  [ In(<A, na>)        // B reçoit A et Na
-  , Fr(~nb)            // B génère Nb
-  , !Pk(A, pkA)        // B cherche la clé publique de A
+  [ In(<A, na>)
+  , Fr(~nb)
+  , !Pk(A, pkA)
   ]
-  --[ Running_R($B, A, <na, ~nb>) ]-> // B pense parler à A
+  --[ Running_R($B, A, <na, ~nb>)
+    , Generate(~nb)       // Tag pour le lemme de sources
+    , Receive_Nonce(na)   // B reçoit une valeur qu'il traite comme un nonce
+    ]-> 
   [ Out(msg_out)
   , St_B_1($B, A, na, ~nb)
   ]
 
-// Etape 3: A vérifie Na, génère Kab, envoie {Kab, Nb, Na, A}pk(B) [cite: 3942, 3952]
+// Etape 3: A vérifie Na, génère Kab, envoie {Kab, Nb, Na, A}pk(B)
+// Problème potentiel: A reçoit 'nb' chiffré mais ne le connait pas encore.
 rule Init_2:
   let
-    // Déchiffrement et vérification implicite via pattern matching
-    // A vérifie que le nonce reçu est bien son ~na
-    msg_in = aenc(<$B, nb, ~na>, pk(~ltkA)) 
+    // A utilise pattern matching pour vérifier que ~na est bien celui envoyé en Etape 1
+    plaintext = adec(ciphertext, ~ltkA)
     msg_out = aenc(<~kab, nb, ~na, $A>, pkB)
   in
   [ St_A_1($A, $B, ~na)
-  , In(msg_in)
+  , In(ciphertext)
   , !Ltk($A, ~ltkA)
   , !Pk($B, pkB)
-  , Fr(~kab) // La clé de session Kab est choisie par A [cite: 3947]
+  , Fr(~kab)
   ]
-  --[ Commit_I($A, $B, <~na, nb>)   // A termine sa partie auth
-    , Running_I($A, $B, ~kab)       // A initie la clé avec B
-    , Secret($A, $B, ~kab)          // Propriété de confidentialité
+  --[ Commit_I($A, $B, <~na, nb>)
+    , Running_I($A, $B, ~kab)
+    , Secret($A, $B, ~kab)
+    , Generate(~kab)      // Tag pour le lemme de sources
+    , Receive_Nonce(nb)   // A reçoit une valeur nb qu'il traite comme un nonce
+    , Eq(plaintext, <$B, nb, ~na>)
   ]->
   [ Out(msg_out)
   , St_A_2($A, $B, ~na, nb, ~kab)
   ]
 
-// Etape 4: B vérifie nonces, reçoit Kab, envoie H(Kab, Na) [cite: 3944, 3953]
+// Etape 4: B vérifie nonces, reçoit Kab, envoie H(Kab, Na)
 rule Resp_2:
   let
-    // B s'attend à recevoir Kab, son Nb, le Na reçu en étape 1, et l'identité A
-    msg_in = aenc(<kab, ~nb, na, A>, pk(~ltkB))
+    // B vérifie ~nb (son nonce) et na (celui reçu en Etape 1)
+    plaintext = adec(ciphertext, ~ltkB)
     proof  = h(<kab, na>)
   in
   [ St_B_1($B, A, na, ~nb)
-  , In(msg_in)
+  , In(ciphertext)
   , !Ltk($B, ~ltkB)
   ]
-  --[ Commit_R($B, A, <na, ~nb>)    // B termine l'auth
-    , Commit_R_Key($B, A, kab)      // B accepte la clé
-    , Secret($B, A, kab)            // Propriété de confidentialité
+  --[ Commit_R($B, A, <na, ~nb>)
+    , Commit_R_Key($B, A, kab)
+    , Secret($B, A, kab)
+    , Receive_Key(kab)    // B reçoit une valeur qu'il traite comme une clé
+    , Eq(plaintext, <kab, ~nb, na, A>)
   ]->
   [ Out(proof) ]
 
-// Etape Finale (Implicite): A reçoit la preuve de B [cite: 3955]
-// Ce message confirme à A que B connaît Kab
+// Etape Finale
 rule Init_3:
   let
     expected_proof = h(<~kab, ~na>)
@@ -104,43 +114,45 @@ rule Init_3:
   --[ Finished_I($A, $B, ~kab) ]->
   [ ]
 
-/* --- 3. Propriétés de Sécurité (Lemmes) --- */
+/* --- 3. Lemme de Sources (Typage) --- */
+/* Ce lemme est crucial pour éviter les boucles infinies.
+   Il dit: "Si un agent reçoit une donnée X qu'il considère comme un Nonce ou une Clé,
+   alors X a forcément été généré par la règle 'Generate' ou est connu de l'attaquant (KU)."
+   Cela empêche Tamarin d'essayer de déconstruire X indéfiniment. [cite: 7091-7100]
+*/
+lemma types [sources]:
+  " (All n #i. Receive_Nonce(n) @i ==> 
+      (Ex #j. Generate(n) @j & j < i) | (Ex #j. KU(n) @j & j < i))
+  & (All k #i. Receive_Key(k) @i ==> 
+      (Ex #j. Generate(k) @j & j < i) | (Ex #j. KU(k) @j & j < i))
+  "
 
-// Vérification que le modèle tourne correctement (Sanity Check)
+/* --- 4. Propriétés de Sécurité --- */
+
 lemma executable:
   exists-trace
-  "Ex A B k #i. Finished_I(A, B, k) @i & not (Ex #j. Reveal(A) @j) & not (Ex #j. Reveal(B) @j)"
+  "Ex A B k #i. Finished_I(A, B, k) @i 
+   & not (Ex #j. Reveal(A) @j) & not (Ex #j. Reveal(B) @j)"
 
-// Propriété: Confidentialité de Kab [cite: 3956]
-// Si A ou B pensent que 'k' est secret, l'attaquant ne doit pas le connaître
-// (sauf si les clés long-terme ont été compromises via Reveal)
 lemma secrecy_Kab:
   all-traces
   "All A B k #i. 
     Secret(A, B, k) @i ==> 
-    ( not (Ex #j. K(k) @j) 
-      | (Ex #r. Reveal(A) @r) 
-      | (Ex #r. Reveal(B) @r) 
-    )"
+    ( not (Ex #j. K(k) @j) | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r) )"
 
-// Propriété: Authentification injective (fraîcheur et accord sur les nonces) [cite: 3955]
-// Si A s'engage avec B sur les nonces <na, nb>, alors B doit avoir lancé le protocole avec A
 lemma injective_agreement_initiator:
   all-traces
   "All A B nonces #i. 
     Commit_I(A, B, nonces) @i ==> 
     ( (Ex #j. Running_R(B, A, nonces) @j & j < i)
-      | (Ex #r. Reveal(A) @r) 
-      | (Ex #r. Reveal(B) @r)
+      | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)
     ) & not (Ex A2 B2 #i2. Commit_I(A2, B2, nonces) @i2 & not(#i2 = #i))"
 
-// Authentification vue par le Répondeur (B) sur les nonces
 lemma injective_agreement_responder:
   all-traces
   "All B A nonces #i. 
     Commit_R(B, A, nonces) @i ==> 
-    ( (Ex #j. Create_I(A, fst(nonces)) @j & j < i) // fst(nonces) = na
-      | (Ex #r. Reveal(A) @r) 
-      | (Ex #r. Reveal(B) @r)
+    ( (Ex #j. Create_I(A, fst(nonces)) @j & j < i)
+      | (Ex #r. Reveal(A) @r) | (Ex #r. Reveal(B) @r)
     ) & not (Ex B2 A2 #i2. Commit_R(B2, A2, nonces) @i2 & not(#i2 = #i))"
-  end"
+end
