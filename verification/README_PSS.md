@@ -41,7 +41,6 @@ La trace:
 
         case B_1_send : B a envoyé ~nb dans le message 1 (Out(~nb)).
 
-        Faille critique : Dans votre modèle corrigé (étape 1), vous avez écrit Out(~nb) au lieu de l'encapsuler chiffré comme le demandait le protocole ({Nb}pk(S)).
 
         Si Nb est envoyé en clair, l'attaquant l'apprend immédiatement.
 
@@ -93,7 +92,7 @@ La trace :
 
         L'attaquant enregistre le trafic (message 2), attend plus tard pour voler la clé de B, puis déchiffre le message enregistré pour retrouver KAB.
 
-L'attaque montre que si un attaquant enregistre le message 2 et compromet plus tard la clé privée de B, il peut retrouver la clé de session KAB. C'est une faiblesse classique des protocoles de transport de clé basés sur RSA (comme SSL/TLS avant 1.3 sans DHE).
+L'attaque montre que si un attaquant enregistre le message 2 et compromet plus tard la clé privée de B, il peut retrouver la clé de session KAB. L'attaque est pas valide car on autorise les clés de session anciennes peuvent être compromises.
 
 3. Le lemme aliveness_B_authenticates_A 
 
@@ -141,7 +140,6 @@ La trace :
 
         L'attaquant a réussi à compléter les étapes 2 et 3 sans que le vrai A ne soit impliqué dans cette session spécifique avec B.
 
-Explication Simplifiée
 
 L'attaque est une usurpation d'identité rendue possible par le manque d'authentification de l'origine du message 2.
 
@@ -181,7 +179,7 @@ L'attaque est une usurpation d'identité rendue possible par le manque d'authent
 
 Conclusion
 
-Le protocole PSS est vulnérable à une usurpation d'identité de A vers B. La cause racine est que le message 2, qui établit la clé de session KAB​, n'est pas authentifié. Il assure la confidentialité (seul B peut le lire), mais pas l'origine (n'importe qui peut l'écrire). B ne peut pas savoir si c'est A ou un attaquant qui a généré ce message. Attaque non valide car autorisée par l'énoncé
+Le protocole PSS est vulnérable à une usurpation d'identité de A vers B. La cause racine est que le message 2, qui établit la clé de session KAB​, n'est pas authentifié. Il assure la confidentialité (seul B peut le lire), mais pas l'origine (n'importe qui peut l'écrire). B ne peut pas savoir si c'est A ou un attaquant qui a généré ce message. Attaque non valide car autorisée par l'énoncé, tant que à la fin du processus A a bien authentifié et B et B a bien authentifié A alors c'est bon.
 
 4. Le Lemme : agreement_B_authenticates_A
 
@@ -216,7 +214,7 @@ La trace :
 
         Par conséquent, l'événement Running_A(A, B, K_att, ...) n'existe pas dans la trace.
 
-Même sans compromission complexe, l'attaque reste valide : B accepte une clé qui ne vient pas de A. Il y a donc un désaccord total (non-agreement) sur la clé de session établie.
+Même sans compromission complexe, l'attaque reste valide : B accepte une clé qui ne vient pas de A. Il y a donc un désaccord total (non-agreement) sur la clé de session établie. Car en grande partie Nb est public.
 
 Le protocole PSS ne garantit pas l'Agreement (Accord) de B vers A. Un attaquant peut forcer B à accepter une clé de session et des nonces de son choix en se faisant passer pour A. B croit partager ces valeurs avec A, alors que A ne les connaît pas. C'est une rupture critique de l'authentification mutuelle.
 
@@ -362,4 +360,4 @@ Scénario probable de l'attaque (Rejeu)
 
         Violation : B a commis deux fois (Session 1 et Session 2) pour une seule exécution de A (Session 1). L'injectivité est brisée.
 
-Le protocole PSS est vulnérable aux attaques par rejeu (Replay Attacks). Si un attaquant peut rejouer d'anciens messages, il peut amener B à accepter une session comme nouvelle alors qu'elle est une copie d'une ancienne. Cela viole la propriété d'Accord Injectif (unicité de la session). Pour corriger cela, il faudrait inclure un identifiant de session unique ou un timestamp dans les messages chiffrés pour garantir leur fraîcheur absolue et empêcher leur réutilisation.
+Le protocole PSS est vulnérable aux attaques par rejeu (Replay Attacks). Si un attaquant peut rejouer d'anciens messages, il peut amener B à accepter une session comme nouvelle alors qu'elle est une copie d'une ancienne, sauf que dans les spécifications B verifie bien que le nonce est unique donc l'attaque est pas valide.

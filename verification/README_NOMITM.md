@@ -253,5 +253,4 @@ C'est une attaque par rejeu (Replay Attack) ou une variante de Man-in-the-Middle
 
         B déchiffre, voit que le format est correct (si les nonces ne sont pas vérifiés strictement ou s'ils sont prévisibles/réutilisés par l'attaquant dans la construction du message 1), et accepte la clé Kab.
 
-Conclusion pour le rapport :
 Les nonces sont bien verifiés et pas previsibles donc B n'acceptera pas la clé, attaque non valide.
