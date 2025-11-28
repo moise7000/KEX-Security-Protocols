@@ -40,7 +40,8 @@ $B$ ne conserve pas de trace des clés de session déjà utilisées.
 Cette attaque par rejeu n'est pas considérée comme une violation de nos spécifications de
 sécurité. En effet, le document de spécifications stipule explicitement que B doit vérifier
 que le nonce n'a pas déjà été envoyé. Donc si il reçoit 2 fois le même message il pourra avorter
-le protocole.
+le protocole. Cette modification a été ajoutée dans tamarinn mais nous n'avons pas réussi à faire
+fonctionner le protocole avec cete modification des règles de réécriture.
 
 La propriété d'injectivité stricte n'est donc pas nécessaire dans notre contexte d'utilisation.
 Ce qui importe est que chaque session soit correctement authentifiée et que la clé reste secrète
