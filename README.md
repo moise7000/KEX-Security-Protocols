@@ -1,8 +1,10 @@
-# Security Protocols and Verification Project
+# KEX Security Protocols and Verification Project
+
+KEX stands for Key EXchange.
 
 ## Project Overview
 
-This project focuses on the design and analysis of cryptographic protocols in three main phases:
+This project focuses on the design and analysis of cryptographic KEX protocols in three main phases:
 1. **Protocol Design** - Design a secret exchange protocol
 2. **Protocol Attacks** - Attack other teams' protocols and defend your own
 3. **Formal Analysis** - Model and analyze protocols using Tamarin
